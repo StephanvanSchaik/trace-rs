@@ -1,6 +1,6 @@
 # trace-rs
 
-[![CI](https://github.com/StephanvanSchaik/trace-rs/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/StephanvanSchaik/trace-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/StephanvanSchaik/trace-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/StephanvanSchaik/trace-rs/actions/workflows/ci.yml)
 
 A cross-platform and safe Rust API to trace other processes using [`ptrace`](https://man7.org/linux/man-pages/man2/ptrace.2.html) and [the Windows debugging API](https://docs.microsoft.com/en-us/windows/win32/debug/debugging-functions).
 More specifically, with trace-rs you can spawn a process and immediately trace and debug it, or attach to an already running process.
