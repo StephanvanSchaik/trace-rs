@@ -16,6 +16,13 @@ pub struct Tracee {
     signal: Option<Signal>,
 }
 
+impl Tracee {
+    /// Returns the process ID.
+    pub fn process_id(&self) -> u32 {
+        self.pid.as_raw() as _
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ChildState {
     Create,
