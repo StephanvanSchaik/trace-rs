@@ -366,9 +366,9 @@ impl TracerExt for Tracer {
 
         // Write the system call instruction.
         let rip = tracee.get_registers(&[Register::Rip])?[0];
-        let mut bytes = [0u8; 2];
+        let mut bytes = [0u8; 3];
         tracee.read_memory(rip as _, &mut bytes)?;
-        tracee.write_memory(rip as _, &[0x0f, 0x05])?;
+        tracee.write_memory(rip as _, &[0x0f, 0x05, 0xcc])?;
 
         // Prepare the system call number and argument registers.
         let mut registers = vec![Register::Rax];
@@ -382,10 +382,8 @@ impl TracerExt for Tracer {
         tracee.set_registers(&registers, &values)?;
 
         // Issue the system call.
-        for _ in 0..2 {
-            self.until_syscall(tracee)?;
-            tracee = self.wait()?.0;
-        }
+        self.resume(tracee)?;
+        tracee = self.wait()?.0;
 
         // Get the result.
         let result = tracee.get_registers(&[Register::Rax])?[0];
