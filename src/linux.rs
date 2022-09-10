@@ -1,38 +1,18 @@
 use crate::{Error, Tracee};
-use nix::sys::uio::{process_vm_readv, process_vm_writev, RemoteIoVec};
-use std::io::{IoSlice, IoSliceMut};
+use nix::sys::uio::{pread, pwrite};
+use std::os::unix::io::AsRawFd;
 
 impl Tracee {
     /// Reads the data at the virtual address from the traced process.
     pub fn read_memory(&self, address: usize, data: &mut [u8]) -> Result<usize, Error> {
-        let remote_iov = &[RemoteIoVec {
-            base: address,
-            len: data.len(),
-        }];
-        let local_iov = &mut [IoSliceMut::new(data)];
-
-        let size = process_vm_readv(
-            self.pid,
-            local_iov,
-            remote_iov,
-        )?;
+        let size = pread(self.file.as_raw_fd(), data, address as _)?;
 
         Ok(size)
     }
 
-    /// Writes data at the virtual address to the traced process.
-    pub fn write_memory(&self, address: usize, data: &[u8]) -> Result<usize, Error> {
-        let remote_iov = &[RemoteIoVec {
-            base: address,
-            len: data.len(),
-        }];
-        let local_iov = &mut [IoSlice::new(data)];
-
-        let size = process_vm_writev(
-            self.pid,
-            local_iov,
-            remote_iov,
-        )?;
+    /// Writes the data to the virtual address of the traced process.
+    pub fn write_memory(&mut self, address: usize, data: &[u8]) -> Result<usize, Error> {
+        let size = pwrite(self.file.as_raw_fd(), data, address as _)?;
 
         Ok(size)
     }

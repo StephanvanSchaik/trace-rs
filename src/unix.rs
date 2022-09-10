@@ -5,6 +5,7 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::sys::signal::Signal;
 use nix::unistd::Pid;
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::ops::Range;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
@@ -14,6 +15,8 @@ use std::process::{Child, Command};
 pub struct Tracee {
     pub(crate) pid: Pid,
     signal: Option<Signal>,
+    #[cfg(target_os = "linux")]
+    pub(crate) file: File,
 }
 
 impl Tracee {
@@ -42,6 +45,8 @@ struct ChildInfo {
 #[derive(Debug)]
 pub struct Tracer {
     children: HashMap<Pid, ChildInfo>,
+    #[cfg(target_os = "linux")]
+    files: HashMap<Pid, File>,
 }
 
 impl Tracer {
@@ -49,6 +54,8 @@ impl Tracer {
     pub fn new() -> Self {
         Self {
             children: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            files: HashMap::new(),
         }
     }
 
@@ -89,21 +96,43 @@ impl Tracer {
     pub fn wait(&mut self) -> Result<(Tracee, Event), Error> {
         let status = waitpid(None, None)?;
 
-        match status {
+        let (pid, signal) = match status {
             WaitStatus::Stopped(pid, signal) => {
-                #[cfg(target_os = "linux")]
-                ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACESYSGOOD)?;
-
                 let signal = match signal {
                     Signal::SIGTRAP => None,
                     signal => Some(signal),
                 };
 
-                let tracee = Tracee {
-                    pid,
-                    signal,
-                };
+                (pid, signal)
+            }
+            WaitStatus::Exited(pid, _) => {
+                (pid, None)
+            }
+            #[cfg(target_os = "linux")]
+            WaitStatus::PtraceSyscall(pid) => {
+                (pid, None)
+            }
+            _ => panic!("should not happen yet"),
+        };
 
+        #[cfg(target_os = "linux")]
+        let file = match self.files.remove(&pid) {
+            Some(file) => file,
+            None => OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(false)
+                .open("/proc/{pid}/mem")?,
+        };
+
+        let tracee = Tracee {
+            pid,
+            signal,
+            file,
+        };
+
+        match status {
+            WaitStatus::Stopped(pid, _) => {
                 let event = match self.children.get(&pid) {
                     Some(child) => match child.state {
                         ChildState::Create => Event::CreateProcess,
@@ -116,6 +145,9 @@ impl Tracer {
                             state: ChildState::Create,
                         });
 
+                        #[cfg(target_os = "linux")]
+                        ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACESYSGOOD)?;
+
                         Event::CreateProcess
                     }
                 };
@@ -127,11 +159,6 @@ impl Tracer {
                     .map(|info| info.child)
                     .flatten();
 
-                let tracee = Tracee {
-                    pid,
-                    signal: None,
-                };
-
                 let event = Event::ExitProcess {
                     child: child,
                     status: exit_code,
@@ -141,11 +168,6 @@ impl Tracer {
             }
             #[cfg(target_os = "linux")]
             WaitStatus::PtraceSyscall(pid) => {
-                let tracee = Tracee {
-                    pid,
-                    signal: None,
-                };
-
                 #[cfg(target_arch = "x86_64")]
                 let sysno = {
                     let context = ptrace::getregs(tracee.pid)?;
@@ -169,22 +191,28 @@ impl Tracer {
 
     /// Resumes the execution of the traced process.
     pub fn resume(&mut self, tracee: Tracee) -> Result<(), Error> {
-        ptrace::cont(tracee.pid, tracee.signal)?;
-
         if let Some(info) = self.children.get_mut(&tracee.pid) {
             info.state = ChildState::Resume;
         }
+
+        #[cfg(target_os = "linux")]
+        self.files.insert(tracee.pid, tracee.file);
+
+        ptrace::cont(tracee.pid, tracee.signal)?;
 
         Ok(())
     }
 
     /// Step through the traced process.
     pub fn step(&mut self, tracee: Tracee) -> Result<(), Error> {
-        ptrace::step(tracee.pid, tracee.signal)?;
-
         if let Some(info) = self.children.get_mut(&tracee.pid) {
             info.state = ChildState::Step;
         }
+
+        #[cfg(target_os = "linux")]
+        self.files.insert(tracee.pid, tracee.file);
+
+        ptrace::step(tracee.pid, tracee.signal)?;
 
         Ok(())
     }
@@ -195,6 +223,8 @@ impl Tracer {
             Some(info) => info.child,
             _ => None,
         };
+
+        self.files.remove(&tracee.pid);
 
         ptrace::detach(tracee.pid, None)?;
 
@@ -312,14 +342,17 @@ pub trait TracerExt {
 #[cfg(target_os = "linux")]
 impl TracerExt for Tracer {
     fn until_syscall(&mut self, tracee: Tracee) -> Result<(), Error> {
-        ptrace::syscall(tracee.pid, tracee.signal)?;
-
         if let Some(info) = self.children.get_mut(&tracee.pid) {
             info.state = match info.state {
                 ChildState::BeforeSystemCall => ChildState::AfterSystemCall,
                 _ => ChildState::BeforeSystemCall,
             };
         }
+
+        #[cfg(target_os = "linux")]
+        self.files.insert(tracee.pid, tracee.file);
+
+        ptrace::syscall(tracee.pid, tracee.signal)?;
 
         Ok(())
     }
