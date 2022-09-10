@@ -122,7 +122,7 @@ impl Tracer {
                 .read(true)
                 .write(true)
                 .create(false)
-                .open("/proc/{pid}/mem")?,
+                .open(format!("/proc/{pid}/mem"))?,
         };
 
         let tracee = Tracee {
