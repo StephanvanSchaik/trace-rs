@@ -260,7 +260,7 @@ impl Tracer {
 
         let (tracee, result) = self.syscall(
             tracee,
-            Sysno::mprotect as _,
+            Sysno::mmap as _,
             &[0, size as _, flags.bits() as _, (MapFlags::MAP_PRIVATE | MapFlags::MAP_ANONYMOUS).bits() as _, std::usize::MAX, 0],
         )?;
 
