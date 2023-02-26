@@ -135,7 +135,12 @@ impl Tracer {
             WaitStatus::Stopped(pid, _) => {
                 let event = match self.children.get(&pid) {
                     Some(child) => match child.state {
-                        ChildState::Create => Event::CreateProcess,
+                        ChildState::Create => {
+                            #[cfg(target_os = "linux")]
+                            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACESYSGOOD)?;
+
+                            Event::CreateProcess
+                        },
                         ChildState::Step => Event::SingleStep,
                         _ => Event::Breakpoint,
                     }
