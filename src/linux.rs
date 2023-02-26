@@ -1,4 +1,5 @@
 use crate::{Error, Tracee};
+use crate::unix::ChildState;
 use nix::sys::uio::{pread, pwrite};
 use std::os::unix::io::AsRawFd;
 
@@ -35,7 +36,11 @@ impl CpuRegs for Tracee {
         Ok(registers
             .into_iter()
             .map(|register| match register {
-                Register::Rax => context.rax,
+                Register::Rax => if self.state == ChildState::BeforeSystemCall {
+                    context.orig_rax
+                } else {
+                    context.rax
+                }
                 Register::Rcx => context.rcx,
                 Register::Rdx => context.rdx,
                 Register::Rbx => context.rbx,
@@ -66,7 +71,11 @@ impl CpuRegs for Tracee {
 
         for (register, value) in registers.into_iter().zip(values.into_iter()) {
             match register {
-                Register::Rax => context.rax = *value,
+                Register::Rax => if self.state == ChildState::BeforeSystemCall {
+                    context.orig_rax = *value;
+                } else {
+                    context.rax = *value;
+                },
                 Register::Rcx => context.rcx = *value,
                 Register::Rdx => context.rdx = *value,
                 Register::Rbx => context.rbx = *value,

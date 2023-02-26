@@ -15,6 +15,7 @@ use std::process::{Child, Command};
 pub struct Tracee {
     pub(crate) pid: Pid,
     signal: Option<Signal>,
+    pub(crate) state: ChildState,
     #[cfg(target_os = "linux")]
     pub(crate) file: File,
 }
@@ -27,7 +28,7 @@ impl Tracee {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ChildState {
+pub(crate) enum ChildState {
     Create,
     Resume,
     Step,
@@ -127,6 +128,7 @@ impl Tracer {
 
         let tracee = Tracee {
             pid,
+            state: self.children.get(&pid).map(|child| child.state).unwrap_or(ChildState::Create),
             signal,
             file,
         };
@@ -371,9 +373,9 @@ impl TracerExt for Tracer {
 
         // Write the system call instruction.
         let rip = tracee.get_registers(&[Register::Rip])?[0];
-        let mut bytes = [0u8; 3];
+        let mut bytes = [0u8; 2];
         tracee.read_memory(rip as _, &mut bytes)?;
-        tracee.write_memory(rip as _, &[0x0f, 0x05, 0xcc])?;
+        tracee.write_memory(rip as _, &[0x0f, 0x05])?;
 
         // Prepare the system call number and argument registers.
         let mut registers = vec![Register::Rax];
@@ -387,8 +389,10 @@ impl TracerExt for Tracer {
         tracee.set_registers(&registers, &values)?;
 
         // Issue the system call.
-        self.resume(tracee)?;
-        tracee = self.wait()?.0;
+        for _ in 0..2 {
+            self.until_syscall(tracee)?;
+            tracee = self.wait()?.0;
+        }
 
         // Get the result.
         let result = tracee.get_registers(&[Register::Rax])?[0];
