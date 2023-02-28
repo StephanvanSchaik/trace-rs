@@ -14,6 +14,9 @@ cc = "1"
 [target.'cfg(target_os = "linux")'.dependencies]
 syscalls = "0.6"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = { git = "https://github.com/JohnTitor/mach2" }
+
 [target.'cfg(unix)'.dependencies]
 nix = "0.24"
 
