@@ -12,6 +12,9 @@ use std::process::{Child, Command};
 #[cfg(target_os = "linux")]
 use crate::linux::TraceeData;
 
+#[cfg(target_os = "macos")]
+use crate::macos::TraceeData;
+
 /// The tracee is the process that is currently being traced.
 #[derive(Debug)]
 pub struct Tracee {
