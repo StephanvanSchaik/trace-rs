@@ -130,6 +130,7 @@ impl Tracer {
             pid,
             state: self.children.get(&pid).map(|child| child.state).unwrap_or(ChildState::Create),
             signal,
+            #[cfg(target_os = "linux")]
             file,
         };
 
@@ -231,6 +232,7 @@ impl Tracer {
             _ => None,
         };
 
+        #[cfg(target_os = "linux")]
         self.files.remove(&tracee.pid);
 
         ptrace::detach(tracee.pid, None)?;
