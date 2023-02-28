@@ -5,10 +5,12 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::sys::signal::Signal;
 use nix::unistd::Pid;
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
 use std::ops::Range;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
+
+#[cfg(target_os = "linux")]
+use crate::linux::TraceeData;
 
 /// The tracee is the process that is currently being traced.
 #[derive(Debug)]
@@ -16,8 +18,7 @@ pub struct Tracee {
     pub(crate) pid: Pid,
     signal: Option<Signal>,
     pub(crate) state: ChildState,
-    #[cfg(target_os = "linux")]
-    pub(crate) file: File,
+    pub(crate) data: TraceeData,
 }
 
 impl Tracee {
@@ -46,8 +47,7 @@ struct ChildInfo {
 #[derive(Debug)]
 pub struct Tracer {
     children: HashMap<Pid, ChildInfo>,
-    #[cfg(target_os = "linux")]
-    files: HashMap<Pid, File>,
+    data: HashMap<Pid, TraceeData>,
 }
 
 impl Tracer {
@@ -55,8 +55,7 @@ impl Tracer {
     pub fn new() -> Self {
         Self {
             children: HashMap::new(),
-            #[cfg(target_os = "linux")]
-            files: HashMap::new(),
+            data: HashMap::new(),
         }
     }
 
@@ -116,22 +115,16 @@ impl Tracer {
             _ => panic!("should not happen yet"),
         };
 
-        #[cfg(target_os = "linux")]
-        let file = match self.files.remove(&pid) {
-            Some(file) => file,
-            None => OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(false)
-                .open(format!("/proc/{pid}/mem"))?,
+        let data = match self.data.remove(&pid) {
+            Some(data) => data,
+            _ => TraceeData::new(pid)?,
         };
 
         let tracee = Tracee {
             pid,
             state: self.children.get(&pid).map(|child| child.state).unwrap_or(ChildState::Create),
             signal,
-            #[cfg(target_os = "linux")]
-            file,
+            data,
         };
 
         match status {
@@ -203,8 +196,7 @@ impl Tracer {
             info.state = ChildState::Resume;
         }
 
-        #[cfg(target_os = "linux")]
-        self.files.insert(tracee.pid, tracee.file);
+        self.data.insert(tracee.pid, tracee.data);
 
         ptrace::cont(tracee.pid, tracee.signal)?;
 
@@ -217,8 +209,7 @@ impl Tracer {
             info.state = ChildState::Step;
         }
 
-        #[cfg(target_os = "linux")]
-        self.files.insert(tracee.pid, tracee.file);
+        self.data.insert(tracee.pid, tracee.data);
 
         ptrace::step(tracee.pid, tracee.signal)?;
 
@@ -232,8 +223,7 @@ impl Tracer {
             _ => None,
         };
 
-        #[cfg(target_os = "linux")]
-        self.files.remove(&tracee.pid);
+        self.data.remove(&tracee.pid);
 
         ptrace::detach(tracee.pid, None)?;
 
@@ -358,8 +348,7 @@ impl TracerExt for Tracer {
             };
         }
 
-        #[cfg(target_os = "linux")]
-        self.files.insert(tracee.pid, tracee.file);
+        self.data.insert(tracee.pid, tracee.data);
 
         ptrace::syscall(tracee.pid, tracee.signal)?;
 

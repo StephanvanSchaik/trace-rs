@@ -1,19 +1,40 @@
 use crate::{Error, Tracee};
 use crate::unix::ChildState;
 use nix::sys::uio::{pread, pwrite};
+use nix::unistd::Pid;
+use std::fs::{File, OpenOptions};
 use std::os::unix::io::AsRawFd;
+
+#[derive(Debug)]
+pub(crate) struct TraceeData {
+    file: File,
+}
+
+impl TraceeData {
+    pub(crate) fn new(pid: Pid) -> Result<Self, Error> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(format!("/proc/{pid}/mem"))?;
+
+        Ok(Self {
+            file,
+        })
+    }
+}
 
 impl Tracee {
     /// Reads the data at the virtual address from the traced process.
     pub fn read_memory(&self, address: usize, data: &mut [u8]) -> Result<usize, Error> {
-        let size = pread(self.file.as_raw_fd(), data, address as _)?;
+        let size = pread(self.data.file.as_raw_fd(), data, address as _)?;
 
         Ok(size)
     }
 
     /// Writes the data to the virtual address of the traced process.
     pub fn write_memory(&mut self, address: usize, data: &[u8]) -> Result<usize, Error> {
-        let size = pwrite(self.file.as_raw_fd(), data, address as _)?;
+        let size = pwrite(self.data.file.as_raw_fd(), data, address as _)?;
 
         Ok(size)
     }
