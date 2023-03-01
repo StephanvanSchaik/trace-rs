@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use std::process::Command;
-
 #[cfg(target_os = "macos")]
 fn generate_mach_exception_interface() {
+    use std::path::PathBuf;
+    use std::process::Command;
+
     // Run xcrun --show-sdk-path to determine the installation path of the MacOS SDK.
     let mut output = Command::new("xcrun")
         .args(["--show-sdk-path"])
