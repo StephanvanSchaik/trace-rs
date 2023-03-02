@@ -124,6 +124,7 @@ impl Drop for TraceeData {
 
 #[derive(Debug)]
 pub struct Tracee {
+    pub(crate) task: mach_port_t,
     pub(crate) thread: mach_port_t,
     pub(crate) pid: Pid,
 }

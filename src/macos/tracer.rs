@@ -68,6 +68,7 @@ fn poll_events(
                     pids.remove(&pid);
 
                     let tracee = Tracee {
+                        task: 0,
                         thread: 0,
                         pid,
                     };

@@ -118,6 +118,7 @@ extern "C" fn catch_mach_exception_raise(
 
     // Construct the tracee.
     let tracee = Tracee {
+        task: task_port,
         thread: thread_port,
         pid: Pid::from_raw(pid),
     };
