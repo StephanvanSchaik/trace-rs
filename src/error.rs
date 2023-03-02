@@ -32,4 +32,9 @@ pub enum Error {
     /// Represents [`widestring::error::Utf16Error`].
     #[error(transparent)]
     Utf16(#[from] widestring::error::Utf16Error),
+
+    #[cfg(target_os = "macos")]
+    /// An error returned by the internal Mach API on MacOS.
+    #[error("Mach error {0}")]
+    Mach(mach2::kern_return::kern_return_t),
 }
