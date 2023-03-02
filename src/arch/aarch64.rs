@@ -7,10 +7,14 @@ use crate::error::Error;
 pub enum Register {
     /// A general-purpose register.
     X(usize),
-    /// The program counter register.
-    Pc,
+    /// The frame pointer register.
+    Fp,
+    /// The link register.
+    Lr,
     /// The stack pointer register.
     Sp,
+    /// The program counter register.
+    Pc,
     /// The processor state register.
     Pstate,
 }
