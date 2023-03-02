@@ -10,3 +10,5 @@ You can then follow and control the execution of the process as well as examine 
 
  * `x86_64-pc-windows-msvc`
  * `x86_64-unknown-linux-gnu`
+ * `x86_64-apple-darwin`
+ * `aarch64-apple-darwin`
