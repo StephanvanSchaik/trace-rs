@@ -1,4 +1,6 @@
 use crate::{Error, Event, Tracee};
+use mach2::port::MACH_PORT_NULL;
+use mach2::thread_status::THREAD_STATE_NONE;
 use nix::{
     sys::event::*,
     sys::ptrace,
@@ -11,7 +13,7 @@ use std::process::{Child, Command};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::JoinHandle;
-use super::tracee::TraceeData;
+use super::tracee::{task_set_exception_ports, TraceeData};
 
 fn poll_events(
     tx: Arc<SyncSender<(Tracee, Event)>>,
@@ -253,5 +255,26 @@ impl Tracer {
         }
 
         Ok(())
+    }
+
+    /// Detach the tracer from the process.
+    pub fn detach(&mut self, tracee: Tracee) -> Result<Option<Child>, Error> {
+        let child = self.children.remove(&tracee.pid);
+
+        if let Some(data) = self.data.remove(&tracee.pid) {
+            unsafe {
+                task_set_exception_ports(
+                    data.task,
+                    0,
+                    MACH_PORT_NULL,
+                    0,
+                    THREAD_STATE_NONE,
+                );
+            }
+
+            data.tx.send(()).unwrap();
+        }
+
+        Ok(child)
     }
 }

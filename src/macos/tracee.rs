@@ -24,7 +24,7 @@ extern "C" {
 
 #[derive(Debug)]
 pub(crate) struct TraceeData {
-    task: task_t,
+    pub(crate) task: task_t,
     exception_port: mach_port_t,
     _thread: JoinHandle<()>,
     pub(crate) tx: Sender<()>,
