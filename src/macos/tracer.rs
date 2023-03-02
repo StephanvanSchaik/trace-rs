@@ -11,11 +11,13 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::JoinHandle;
 use super::tracee::{task_set_exception_ports, TraceeData};
 
 fn poll_events(
+    run: Arc<AtomicBool>,
     tx: Arc<SyncSender<(Tracee, Event)>>,
     wakeup_rx: RawFd,
     event_rx: Receiver<Pid>,
@@ -23,7 +25,7 @@ fn poll_events(
     let kq = kqueue()?;
     let mut pids: HashSet<Pid> = HashSet::new();
 
-    loop {
+    while run.load(Ordering::Relaxed) {
         let mut events = vec![];
         let mut new_events = vec![];
 
@@ -84,15 +86,18 @@ fn poll_events(
             }
         }
     }
+
+    Ok(())
 }
 
 #[derive(Debug)]
 pub struct Tracer {
     children: HashMap<Pid, Child>,
     data: HashMap<Pid, TraceeData>,
+    run: Arc<AtomicBool>,
     rx: Receiver<(Tracee, Event)>,
     tx: Arc<SyncSender<(Tracee, Event)>>,
-    _thread: JoinHandle<Result<(), Error>>,
+    thread: Option<JoinHandle<Result<(), Error>>>,
     wakeup_tx: RawFd,
     event_tx: Sender<Pid>,
 }
@@ -100,21 +105,26 @@ pub struct Tracer {
 impl Tracer {
     /// Construct a new tracer.
     pub fn new() -> Self {
+        let run = Arc::new(AtomicBool::new(true));
         let (tx, rx) = mpsc::sync_channel(1);
         let tx = Arc::new(tx);
         let (wakeup_rx, wakeup_tx) = pipe().unwrap();
         let (event_tx, event_rx) = mpsc::channel();
 
         // Set up the kqueue thread.
+        let moved_run = run.clone();
         let moved_tx = tx.clone();
-        let thread = std::thread::spawn(move || poll_events(moved_tx, wakeup_rx, event_rx));
+        let thread = std::thread::spawn(move || {
+            poll_events(moved_run, moved_tx, wakeup_rx, event_rx)
+        });
 
         Self {
             children: HashMap::new(),
             data: HashMap::new(),
+            run,
             rx,
             tx,
-            _thread: thread,
+            thread: Some(thread),
             wakeup_tx,
             event_tx,
         }
@@ -211,6 +221,10 @@ impl Tracer {
             Event::ExitProcess { status, .. } => {
                 let child = self.children.remove(&tracee.pid);
 
+                if let Some(data) = self.data.remove(&tracee.pid) {
+                    drop(data);
+                }
+
                 Event::ExitProcess { child, status }
             },
             _ => event,
@@ -272,9 +286,20 @@ impl Tracer {
                 );
             }
 
-            data.tx.send(()).unwrap();
+            drop(data);
         }
 
         Ok(child)
+    }
+}
+
+impl Drop for Tracer {
+    fn drop(&mut self) {
+        self.run.store(false, Ordering::Relaxed);
+        write(self.wakeup_tx, &[0]).unwrap();
+
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join().unwrap();
+        }
     }
 }

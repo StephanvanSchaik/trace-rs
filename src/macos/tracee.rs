@@ -9,6 +9,7 @@ use mach2::thread_status::{thread_state_flavor_t, THREAD_STATE_NONE};
 use mach2::traps::{mach_task_self, task_for_pid};
 use nix::unistd::Pid;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender, SyncSender};
 use std::thread::JoinHandle;
 
@@ -26,8 +27,9 @@ extern "C" {
 pub(crate) struct TraceeData {
     pub(crate) task: task_t,
     exception_port: mach_port_t,
-    _thread: JoinHandle<()>,
+    thread: Option<JoinHandle<()>>,
     pub(crate) tx: Sender<()>,
+    pub(crate) run: Arc<AtomicBool>,
 }
 
 impl TraceeData {
@@ -90,22 +92,32 @@ impl TraceeData {
         }
 
         let (tx2, rx) = mpsc::channel();
+        let run = Arc::new(AtomicBool::new(true));
 
+        let moved_run = run.clone();
         let thread = std::thread::spawn(move || {
-            super::exceptions::receive_mach_msgs(task, exception_port, tx, rx);
+            super::exceptions::receive_mach_msgs(task, exception_port, moved_run, tx, rx);
         });
 
         Ok(Self {
             task,
             exception_port,
-            _thread: thread,
+            thread: Some(thread),
             tx: tx2,
+            run,
         })
     }
 }
 
 impl Drop for TraceeData {
     fn drop(&mut self) {
+        self.run.store(false, Ordering::Relaxed);
+        let _ = self.tx.send(()).unwrap();
+
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join().unwrap();
+        }
+
         unsafe {
             mach_port_deallocate(
                 mach_task_self(),

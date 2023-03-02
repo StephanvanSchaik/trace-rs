@@ -12,6 +12,7 @@ use mach2::vm_types::integer_t;
 use nix::unistd::Pid;
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::thread_local;
 
@@ -218,10 +219,11 @@ pub struct exception_message_t {
 pub(crate) fn receive_mach_msgs(
     task: mach_port_t,
     exception_port: exception_port_t,
+    run: Arc<AtomicBool>,
     tx: Arc<SyncSender<(Tracee, Event)>>,
     rx: Receiver<()>,
 ) {
-    loop {
+    while run.load(Ordering::Relaxed) {
         let mut msg: exception_message_t = unsafe { std::mem::zeroed() };
         let mut reply: exception_message_t = unsafe { std::mem::zeroed() };
 
@@ -229,11 +231,11 @@ pub(crate) fn receive_mach_msgs(
         let result = unsafe {
             mach_msg(
                 &mut msg.header,
-                MACH_RCV_MSG | MACH_RCV_LARGE,
+                MACH_RCV_MSG | MACH_RCV_LARGE | MACH_RCV_TIMEOUT,
                 0,
                 std::mem::size_of::<exception_message_t>() as _,
                 exception_port,
-                MACH_MSG_TIMEOUT_NONE,
+                1,
                 MACH_PORT_NULL,
             )
         };
@@ -243,18 +245,13 @@ pub(crate) fn receive_mach_msgs(
             task_suspend(task)
         };
 
-        // There shouldn't be a timeout, but resume the task and try again if this happens.
-        if result == MACH_RCV_TIMEOUT {
+        // Resume the task and try again.
+        if result != KERN_SUCCESS {
             unsafe {
                 task_resume(task)
             };
 
             continue;
-        }
-
-        // This shouldn't happen, so break out of the loop and report the error.
-        if result != KERN_SUCCESS {
-            break;
         }
 
         // Process the exception.
