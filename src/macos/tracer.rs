@@ -176,6 +176,30 @@ impl Tracer {
         Ok(())
     }
 
+    /// Attaches the tracer to the process with the given process ID.
+    pub fn attach(&mut self, process_id: u32) -> Result<(), Error> {
+        let pid = Pid::from_raw(process_id as _);
+
+        // Set up the exception port.
+        let data = TraceeData::new(pid, self.tx.clone())?;
+        self.data.insert(pid, data);
+
+        let result = unsafe {
+            libc::ptrace(
+                libc::PT_ATTACHEXC,
+                process_id as _,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+
+        if result != 0 {
+            Err(nix::Error::from_i32(result))?;
+        }
+
+        Ok(())
+    }
+
     /// Waits for an event from any of the processes that are currently being traced.
     pub fn wait(&mut self) -> Result<(Tracee, Event), Error> {
         let (tracee, event) = self.rx.recv().unwrap();
