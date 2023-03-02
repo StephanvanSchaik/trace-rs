@@ -18,5 +18,8 @@ pub use mmap_rs::Protection;
 #[cfg(target_os = "linux")]
 pub use crate::linux::{Tracee, Tracer};
 
+#[cfg(target_os = "macos")]
+pub use crate::macos::{Tracee, Tracer};
+
 #[cfg(target_os = "windows")]
 pub use crate::windows::{Tracee, Tracer};

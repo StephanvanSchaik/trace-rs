@@ -1,27 +1,84 @@
+use crate::{Event, Tracee};
 use mach2::boolean::boolean_t;
-use mach2::exception_types::{exception_type_t, mach_exception_data_t};
-use mach2::kern_return::kern_return_t;
-use mach2::message::{mach_msg_header_t, mach_msg_type_number_t, MACH_RCV_INVALID_TYPE};
-use mach2::port::mach_port_t;
+use mach2::exception_types::*;
+use mach2::kern_return::{kern_return_t, KERN_SUCCESS};
+use mach2::mach_types::{exception_port_t, task_t};
+use mach2::message::{mach_msg, mach_msg_body_t, mach_msg_header_t, mach_msg_port_descriptor_t, MACH_MSG_TIMEOUT_NONE, mach_msg_type_number_t, MACH_RCV_INVALID_TYPE, MACH_RCV_LARGE, MACH_RCV_MSG, MACH_RCV_TIMEOUT, MACH_SEND_MSG};
+use mach2::port::{mach_port_t, MACH_PORT_NULL};
+use mach2::task::{task_resume, task_suspend};
 use mach2::thread_status::thread_state_t;
+use mach2::vm_types::integer_t;
+use nix::unistd::Pid;
+use std::cell::RefCell;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, SyncSender};
+use std::thread_local;
 
 extern "C" {
     pub fn mach_exc_server(
         request: *const mach_msg_header_t,
         reply: *mut mach_msg_header_t,
     ) -> boolean_t;
+    pub fn pid_for_task(
+        task: task_t,
+        pid: *mut libc::c_int,
+    );
+}
+
+thread_local! {
+    static EVENT: RefCell<Option<(Tracee, Event)>> = RefCell::new(None);
 }
 
 #[no_mangle]
 extern "C" fn catch_mach_exception_raise(
     _exception_port: mach_port_t,
-    _thread_port: mach_port_t,
-    _task_port: mach_port_t,
-    _exception_type: exception_type_t,
-    _codes: mach_exception_data_t,
-    _num_codes: mach_msg_type_number_t,
+    thread_port: mach_port_t,
+    task_port: mach_port_t,
+    exception_type: exception_type_t,
+    codes: mach_exception_data_t,
+    num_codes: mach_msg_type_number_t,
 ) -> kern_return_t {
-    MACH_RCV_INVALID_TYPE
+    let codes = unsafe {
+        std::slice::from_raw_parts(codes, num_codes as _)
+    };
+
+    let mut pid: libc::c_int = 0;
+
+    unsafe {
+        pid_for_task(task_port, &mut pid)
+    };
+
+    let tracee = Tracee {
+        thread: thread_port,
+        pid: Pid::from_raw(pid),
+    };
+
+    match exception_type as _ {
+        EXC_SOFTWARE => {
+            match codes.get(0).map(|v| *v).unwrap_or(0) as _ {
+                EXC_SOFT_SIGNAL => {
+                    let _signal = codes.get(1).map(|v| *v).unwrap_or(0) as i32;
+
+                    EVENT.with(|event| {
+                        *event.borrow_mut() = Some((tracee, Event::CreateProcess));
+                    });
+                }
+                _ => (),
+            }
+        }
+        EXC_BREAKPOINT => {
+            EVENT.with(|event| {
+                *event.borrow_mut() = Some((tracee, if codes[1] == 0 {
+                    Event::SingleStep
+                } else {
+                    Event::Breakpoint
+                }));
+            });
+        }
+        _ => (),
+    }
+
+    KERN_SUCCESS
 }
 
 #[no_mangle]
@@ -54,4 +111,111 @@ extern "C" fn catch_mach_exception_raise_state_identity(
     _new_state_count: *mut mach_msg_type_number_t,
 ) -> kern_return_t {
     MACH_RCV_INVALID_TYPE
+}
+
+// This is the definition from osfmk/mach/arm/exception.h and osfmk/mach/i386/exception.h.
+pub const EXCEPTION_CODE_MAX: usize = 2;
+
+// This is the definition from osfmk/mach/ndr.h.
+#[repr(C)]
+pub struct NDR_record_t {
+    mig_vers: u8,
+    if_vers: u8,
+    _0: u8,
+    mig_encoding: u8,
+    int_rep: u8,
+    char_rep: u8,
+    float_rep: u8,
+    _1: u8,
+}
+
+#[repr(C)]
+pub struct exception_message_t {
+    header: mach_msg_header_t,
+    body: mach_msg_body_t,
+    thread: mach_msg_port_descriptor_t,
+    task: mach_msg_port_descriptor_t,
+    ndr: NDR_record_t,
+    exception: exception_type_t,
+    code_count: mach_msg_type_number_t,
+    code: [integer_t; EXCEPTION_CODE_MAX],
+    padding: [u8; 512],
+}
+
+pub(crate) fn receive_mach_msgs(
+    task: mach_port_t,
+    exception_port: exception_port_t,
+    tx: Arc<SyncSender<(Tracee, Event)>>,
+    rx: Receiver<()>,
+) {
+    loop {
+        let mut msg: exception_message_t = unsafe { std::mem::zeroed() };
+        let mut reply: exception_message_t = unsafe { std::mem::zeroed() };
+
+        // Wait for a message on the exception port.
+        let result = unsafe {
+            mach_msg(
+                &mut msg.header,
+                MACH_RCV_MSG | MACH_RCV_LARGE,
+                0,
+                std::mem::size_of::<exception_message_t>() as _,
+                exception_port,
+                MACH_MSG_TIMEOUT_NONE,
+                MACH_PORT_NULL,
+            )
+        };
+
+        // Suspend the task.
+        unsafe {
+            task_suspend(task)
+        };
+
+        // There shouldn't be a timeout, but resume the task and try again if this happens.
+        if result == MACH_RCV_TIMEOUT {
+            unsafe {
+                task_resume(task)
+            };
+
+            continue;
+        }
+
+        // This shouldn't happen, so break out of the loop and report the error.
+        if result != KERN_SUCCESS {
+            break;
+        }
+
+        // Process the exception.
+        unsafe {
+            mach_exc_server(&msg.header, &mut reply.header)
+        };
+
+        // Take the event from the exception handler.
+        let event = EVENT.with(|event| {
+            event.borrow_mut().take()
+        });
+
+        // Send the event.
+        if let Some(event) = event {
+            tx.send(event).unwrap();
+            let _ = rx.recv().unwrap();
+        }
+
+        // Resume the task after running our exception handler.
+        unsafe {
+            task_resume(task)
+        };
+
+        // Send the reply.
+        unsafe {
+            mach_msg(
+                &mut reply.header,
+                MACH_SEND_MSG,
+                reply.header.msgh_size,
+                0,
+                MACH_PORT_NULL,
+                MACH_MSG_TIMEOUT_NONE,
+                MACH_PORT_NULL,
+            )
+        };
+    }
 }
