@@ -6,6 +6,7 @@ use mach2::mach_types::{exception_port_t, task_t};
 use mach2::message::{mach_msg, mach_msg_body_t, mach_msg_header_t, mach_msg_port_descriptor_t, MACH_MSG_TIMEOUT_NONE, mach_msg_type_number_t, MACH_RCV_INVALID_TYPE, MACH_RCV_LARGE, MACH_RCV_MSG, MACH_RCV_TIMEOUT, MACH_SEND_MSG};
 use mach2::port::{mach_port_t, MACH_PORT_NULL};
 use mach2::task::{task_resume, task_suspend};
+use mach2::thread_act::{thread_get_state, thread_set_state}; 
 use mach2::thread_status::thread_state_t;
 use mach2::vm_types::integer_t;
 use nix::unistd::Pid;
@@ -29,6 +30,72 @@ thread_local! {
     static EVENT: RefCell<Option<(Tracee, Event)>> = RefCell::new(None);
 }
 
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn set_single_step(thread_port: mach_port_t, enabled: bool) {
+    use mach2::thread_status::x86_THREAD_STATE64;
+    use mach2::structs::x86_thread_state64_t;
+
+    let mut state = x86_thread_state64_t::new();
+    let mut state_count = x86_thread_state64_t::count();
+
+    unsafe {
+        thread_get_state(
+            thread_port,
+            x86_THREAD_STATE64,
+            std::mem::transmute(&mut state),
+            &mut state_count,
+        );
+    }
+
+    if enabled {
+        state.__rflags |= 1 << 8;
+    } else {
+        state.__rflags &= !(1 << 8);
+    }
+
+    unsafe {
+        thread_set_state(
+            thread_port,
+            x86_THREAD_STATE64,
+            std::mem::transmute(&state),
+            state_count,
+        )
+    };
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn set_single_step(thread_port: mach_port_t, enabled: bool) {
+    use mach2::thread_status::ARM_DEBUG_STATE64;
+    use super::structs::arm_debug_state64_t;
+
+    let mut state = arm_debug_state64_t::new();
+    let mut state_count = arm_debug_state64_t::count();
+
+    unsafe {
+        thread_get_state(
+            thread_port,
+            ARM_DEBUG_STATE64,
+            std::mem::transmute(&mut state),
+            &mut state_count,
+        );
+    }
+
+    if enabled {
+        state.__mdscr_el1 |= 1 << 0;
+    } else {
+        state.__mdscr_el1 &= !(1 << 0);
+    }
+
+    unsafe {
+        thread_set_state(
+            thread_port,
+            ARM_DEBUG_STATE64,
+            std::mem::transmute(&state),
+            state_count,
+        )
+    };
+}
+
 #[no_mangle]
 extern "C" fn catch_mach_exception_raise(
     _exception_port: mach_port_t,
@@ -42,12 +109,14 @@ extern "C" fn catch_mach_exception_raise(
         std::slice::from_raw_parts(codes, num_codes as _)
     };
 
+    // Look up the PID for the task.
     let mut pid: libc::c_int = 0;
 
     unsafe {
         pid_for_task(task_port, &mut pid)
     };
 
+    // Construct the tracee.
     let tracee = Tracee {
         thread: thread_port,
         pid: Pid::from_raw(pid),
@@ -59,20 +128,23 @@ extern "C" fn catch_mach_exception_raise(
                 EXC_SOFT_SIGNAL => {
                     let _signal = codes.get(1).map(|v| *v).unwrap_or(0) as i32;
 
-                    EVENT.with(|event| {
-                        *event.borrow_mut() = Some((tracee, Event::CreateProcess));
+                    EVENT.with(|e| {
+                        *e.borrow_mut() = Some((tracee, Event::CreateProcess));
                     });
                 }
                 _ => (),
             }
         }
         EXC_BREAKPOINT => {
-            EVENT.with(|event| {
-                *event.borrow_mut() = Some((tracee, if codes[1] == 0 {
-                    Event::SingleStep
-                } else {
-                    Event::Breakpoint
-                }));
+            let event = if codes[1] == 0 {
+                set_single_step(thread_port, false);
+                Event::SingleStep
+            } else {
+                Event::Breakpoint
+            };
+
+            EVENT.with(|e| {
+                *e.borrow_mut() = Some((tracee, event));
             });
         }
         _ => (),

@@ -209,4 +209,24 @@ impl Tracer {
 
         Ok(())
     }
+
+    /// Step through the traced process.
+    pub fn step(&mut self, tracee: Tracee) -> Result<(), Error> {
+        unsafe {
+            libc::ptrace(
+                libc::PT_THUPDATE,
+                tracee.pid.into(),
+                tracee.thread as _,
+                0,
+            );
+        }
+
+        super::exceptions::set_single_step(tracee.thread, true);
+
+        if let Some(data) = self.data.get(&tracee.pid) {
+            data.tx.send(()).unwrap();
+        }
+
+        Ok(())
+    }
 }
