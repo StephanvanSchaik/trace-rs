@@ -129,10 +129,10 @@ extern "C" fn catch_mach_exception_raise(
         EXC_SOFTWARE => {
             match codes.get(0).map(|v| *v).unwrap_or(0) as _ {
                 EXC_SOFT_SIGNAL => {
-                    let _signal = codes.get(1).map(|v| *v).unwrap_or(0) as i32;
+                    let signal = codes.get(1).map(|v| *v).unwrap_or(0) as i32;
 
                     EVENT.with(|e| {
-                        *e.borrow_mut() = Some((tracee, Event::CreateProcess));
+                        *e.borrow_mut() = Some((tracee, Event::Exception(signal as _)));
                     });
                 }
                 _ => (),

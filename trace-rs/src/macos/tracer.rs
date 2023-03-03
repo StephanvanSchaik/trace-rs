@@ -197,7 +197,10 @@ impl Tracer {
         // Spawn a thread to handle the process forking, since we need to synchronize the ptrace
         // calls.
         let thread = std::thread::spawn(move || -> Result<Child, Error> {
-            let child = command.spawn()?;
+            let child = command
+                .env("DYLD_FORCE_FLAT_NAMESPACE", "1")
+                .env("DYLD_INSERT_LIBRARIES", "target/release/libtrace_helper.dylib")
+                .spawn()?;
             Ok(child)
         });
 
@@ -321,6 +324,23 @@ impl Tracer {
         let (tracee, event) = self.rx.recv().unwrap();
 
         let event = match event {
+            Event::Exception(exception) => match exception as i32 {
+                libc::SIGTRAP => {
+                    Event::CreateProcess
+                },
+                libc::SIGSTOP => {
+                    if !self.children.contains_key(&tracee.pid) {
+                        // Send the PID to monitor using kqueue.
+                        self.event_tx.send(tracee.pid).unwrap();
+                        write(self.wakeup_tx, &[0])?;
+
+                        Event::CreateProcess
+                    } else {
+                        Event::Exception(exception)
+                    }
+                },
+                _ => Event::Exception(exception),
+            },
             Event::ExitProcess { status, .. } => {
                 let child = self.children.remove(&tracee.pid);
 
