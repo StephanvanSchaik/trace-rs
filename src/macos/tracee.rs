@@ -96,7 +96,7 @@ impl TraceeData {
 
         let moved_run = run.clone();
         let thread = std::thread::spawn(move || {
-            super::exceptions::receive_mach_msgs(task, exception_port, moved_run, tx, rx);
+            super::exceptions::receive_mach_msgs(exception_port, moved_run, tx, rx);
         });
 
         Ok(Self {

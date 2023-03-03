@@ -217,7 +217,6 @@ pub struct exception_message_t {
 }
 
 pub(crate) fn receive_mach_msgs(
-    task: mach_port_t,
     exception_port: exception_port_t,
     run: Arc<AtomicBool>,
     tx: Arc<SyncSender<(Tracee, Event)>>,
@@ -239,6 +238,8 @@ pub(crate) fn receive_mach_msgs(
                 MACH_PORT_NULL,
             )
         };
+
+        let task = msg.task.name;
 
         // Suspend the task.
         unsafe {
