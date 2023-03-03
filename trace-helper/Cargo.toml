@@ -1,0 +1,12 @@
+[package]
+name = "trace-helper"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "trace_helper"
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"
+mach2 = "0.4"
