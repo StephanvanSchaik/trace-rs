@@ -99,6 +99,7 @@ fn poll_events(
 
 #[derive(Debug)]
 pub struct Tracer {
+    created: HashSet<Pid>,
     children: HashMap<Pid, Child>,
     run: Arc<AtomicBool>,
     rx: Receiver<(Tracee, Event)>,
@@ -154,6 +155,7 @@ impl Tracer {
         });
 
         Self {
+            created: HashSet::new(),
             children: HashMap::new(),
             run,
             rx,
@@ -326,13 +328,21 @@ impl Tracer {
         let event = match event {
             Event::Exception(exception) => match exception as i32 {
                 libc::SIGTRAP => {
-                    Event::CreateProcess
+                    if !self.created.contains(&tracee.pid) {
+                        self.created.insert(tracee.pid);
+
+                        Event::CreateProcess
+                    } else {
+                        Event::Exception(exception)
+                    }
                 },
                 libc::SIGSTOP => {
-                    if !self.children.contains_key(&tracee.pid) {
+                    if !self.created.contains(&tracee.pid) {
                         // Send the PID to monitor using kqueue.
                         self.event_tx.send(tracee.pid).unwrap();
                         write(self.wakeup_tx, &[0])?;
+
+                        self.created.insert(tracee.pid);
 
                         Event::CreateProcess
                     } else {
