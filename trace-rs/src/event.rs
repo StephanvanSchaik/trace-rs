@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Child;
 
 /// The debug event triggered by the traced process.
@@ -14,6 +15,10 @@ pub enum Event {
     CreateThread,
     /// The thread has exited.
     ExitThread,
+    /// The process loaded a different executable.
+    Execute {
+        path: PathBuf,
+    },
     /// A shared library was loaded.
     LoadLibrary {
         base: usize,

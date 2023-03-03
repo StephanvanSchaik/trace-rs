@@ -15,12 +15,33 @@ use nix::{
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::JoinHandle;
 use super::tracee::task_set_exception_ports;
+
+fn proc_pidpath(pid: Pid) -> Result<PathBuf, Error> {
+    let mut bytes = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as _];
+
+    let result = unsafe {
+        libc::proc_pidpath(pid.as_raw(), bytes.as_mut_ptr() as *mut _, bytes.len() as _)
+    };
+
+    if result < 0 {
+        Err(nix::Error::from_i32(result))?;
+    }
+
+    if let Some(size) = bytes.iter().position(|b| *b == 0) {
+        bytes.truncate(size);
+    }
+
+    let path = std::str::from_utf8(&bytes)?;
+
+    Ok(PathBuf::from(path))
+}
 
 fn poll_events(
     run: Arc<AtomicBool>,
@@ -99,7 +120,7 @@ fn poll_events(
 
 #[derive(Debug)]
 pub struct Tracer {
-    created: HashSet<Pid>,
+    created: HashMap<Pid, PathBuf>,
     children: HashMap<Pid, Child>,
     run: Arc<AtomicBool>,
     rx: Receiver<(Tracee, Event)>,
@@ -155,7 +176,7 @@ impl Tracer {
         });
 
         Self {
-            created: HashSet::new(),
+            created: HashMap::new(),
             children: HashMap::new(),
             run,
             rx,
@@ -328,21 +349,31 @@ impl Tracer {
         let event = match event {
             Event::Exception(exception) => match exception as i32 {
                 libc::SIGTRAP => {
-                    if !self.created.contains(&tracee.pid) {
-                        self.created.insert(tracee.pid);
+                    let path = proc_pidpath(tracee.pid)?;
+
+                    if !self.created.contains_key(&tracee.pid) {
+                        self.created.insert(tracee.pid, path);
 
                         Event::CreateProcess
+                    } else if self.created
+                        .get(&tracee.pid)
+                        .map(|prev| prev != &path)
+                        .unwrap_or(false) {
+                        self.created.insert(tracee.pid, path.clone());
+                        Event::Execute { path }
                     } else {
                         Event::Exception(exception)
                     }
                 },
                 libc::SIGSTOP => {
-                    if !self.created.contains(&tracee.pid) {
+                    if !self.created.contains_key(&tracee.pid) {
+                        let path = proc_pidpath(tracee.pid)?;
+
                         // Send the PID to monitor using kqueue.
                         self.event_tx.send(tracee.pid).unwrap();
                         write(self.wakeup_tx, &[0])?;
 
-                        self.created.insert(tracee.pid);
+                        self.created.insert(tracee.pid, path);
 
                         Event::CreateProcess
                     } else {

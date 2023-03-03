@@ -10,6 +10,10 @@ pub enum Error {
     #[error("invalid protection {0:?}")]
     InvalidProtection(Protection),
 
+    /// Represents [`std::str::Utf8Error`].
+    #[error(transparent)]
+    Utf8(#[from] std::str::Utf8Error),
+
     /// Represents [`std::string::FromUtf8Error`].
     #[error(transparent)]
     FromUtf8(#[from] std::string::FromUtf8Error),
