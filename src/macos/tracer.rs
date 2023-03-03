@@ -1,5 +1,7 @@
 use crate::{Error, Event, Tracee};
 use mach2::port::MACH_PORT_NULL;
+use mach2::message::{mach_msg, MACH_SEND_MSG, MACH_MSG_TIMEOUT_NONE};
+use mach2::thread_act::thread_resume;
 use mach2::thread_status::THREAD_STATE_NONE;
 use nix::{
     sys::event::*,
@@ -75,6 +77,7 @@ fn poll_events(
                         task: 0,
                         thread: 0,
                         pid,
+                        reply: None,
                     };
 
                     tx.send((tracee, Event::ExitProcess {
@@ -234,7 +237,7 @@ impl Tracer {
     }
 
     /// Resumes the execution of the traced process.
-    pub fn resume(&mut self, tracee: Tracee) -> Result<(), Error> {
+    pub fn resume(&mut self, mut tracee: Tracee) -> Result<(), Error> {
         unsafe {
             libc::ptrace(
                 libc::PT_THUPDATE,
@@ -244,15 +247,31 @@ impl Tracer {
             );
         }
 
-        if let Some(data) = self.data.get(&tracee.pid) {
-            data.tx.send(()).unwrap();
+        if let Some(mut reply) = tracee.reply.take() {
+            // Resume the thread.
+            unsafe {
+                thread_resume(tracee.thread);
+            }
+
+            // Send the reply.
+            unsafe {
+                mach_msg(
+                    &mut reply.header,
+                    MACH_SEND_MSG,
+                    reply.header.msgh_size,
+                    0,
+                    MACH_PORT_NULL,
+                    MACH_MSG_TIMEOUT_NONE,
+                    MACH_PORT_NULL,
+                )
+            };
         }
 
         Ok(())
     }
 
     /// Step through the traced process.
-    pub fn step(&mut self, tracee: Tracee) -> Result<(), Error> {
+    pub fn step(&mut self, mut tracee: Tracee) -> Result<(), Error> {
         unsafe {
             libc::ptrace(
                 libc::PT_THUPDATE,
@@ -264,8 +283,24 @@ impl Tracer {
 
         super::exceptions::set_single_step(tracee.thread, true);
 
-        if let Some(data) = self.data.get(&tracee.pid) {
-            data.tx.send(()).unwrap();
+        if let Some(mut reply) = tracee.reply.take() {
+            // Resume the thread.
+            unsafe {
+                thread_resume(tracee.thread);
+            }
+
+            // Send the reply.
+            unsafe {
+                mach_msg(
+                    &mut reply.header,
+                    MACH_SEND_MSG,
+                    reply.header.msgh_size,
+                    0,
+                    MACH_PORT_NULL,
+                    MACH_MSG_TIMEOUT_NONE,
+                    MACH_PORT_NULL,
+                )
+            };
         }
 
         Ok(())

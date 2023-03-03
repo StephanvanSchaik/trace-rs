@@ -3,17 +3,17 @@ use mach2::boolean::boolean_t;
 use mach2::exception_types::*;
 use mach2::kern_return::{kern_return_t, KERN_SUCCESS};
 use mach2::mach_types::{exception_port_t, task_t};
-use mach2::message::{mach_msg, mach_msg_body_t, mach_msg_header_t, mach_msg_port_descriptor_t, MACH_MSG_TIMEOUT_NONE, mach_msg_type_number_t, MACH_RCV_INVALID_TYPE, MACH_RCV_LARGE, MACH_RCV_MSG, MACH_RCV_TIMEOUT, MACH_SEND_MSG};
+use mach2::message::{mach_msg, mach_msg_body_t, mach_msg_header_t, mach_msg_port_descriptor_t, mach_msg_type_number_t, MACH_RCV_INVALID_TYPE, MACH_RCV_LARGE, MACH_RCV_MSG, MACH_RCV_TIMEOUT};
 use mach2::port::{mach_port_t, MACH_PORT_NULL};
 use mach2::task::{task_resume, task_suspend};
-use mach2::thread_act::{thread_get_state, thread_set_state}; 
+use mach2::thread_act::{thread_get_state, thread_set_state, thread_suspend};
 use mach2::thread_status::thread_state_t;
 use mach2::vm_types::integer_t;
 use nix::unistd::Pid;
 use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender};
+use std::sync::mpsc::SyncSender;
 use std::thread_local;
 
 extern "C" {
@@ -122,6 +122,7 @@ extern "C" fn catch_mach_exception_raise(
         task: task_port,
         thread: thread_port,
         pid: Pid::from_raw(pid),
+        reply: None,
     };
 
     match exception_type as _ {
@@ -191,36 +192,37 @@ extern "C" fn catch_mach_exception_raise_state_identity(
 pub const EXCEPTION_CODE_MAX: usize = 2;
 
 // This is the definition from osfmk/mach/ndr.h.
+#[derive(Debug)]
 #[repr(C)]
 pub struct NDR_record_t {
-    mig_vers: u8,
-    if_vers: u8,
-    _0: u8,
-    mig_encoding: u8,
-    int_rep: u8,
-    char_rep: u8,
-    float_rep: u8,
-    _1: u8,
+    pub mig_vers: u8,
+    pub if_vers: u8,
+    pub _0: u8,
+    pub mig_encoding: u8,
+    pub int_rep: u8,
+    pub char_rep: u8,
+    pub float_rep: u8,
+    pub _1: u8,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct exception_message_t {
-    header: mach_msg_header_t,
-    body: mach_msg_body_t,
-    thread: mach_msg_port_descriptor_t,
-    task: mach_msg_port_descriptor_t,
-    ndr: NDR_record_t,
-    exception: exception_type_t,
-    code_count: mach_msg_type_number_t,
-    code: [integer_t; EXCEPTION_CODE_MAX],
-    padding: [u8; 512],
+    pub header: mach_msg_header_t,
+    pub body: mach_msg_body_t,
+    pub thread: mach_msg_port_descriptor_t,
+    pub task: mach_msg_port_descriptor_t,
+    pub ndr: NDR_record_t,
+    pub exception: exception_type_t,
+    pub code_count: mach_msg_type_number_t,
+    pub code: [integer_t; EXCEPTION_CODE_MAX],
+    pub padding: [u8; 512],
 }
 
 pub(crate) fn receive_mach_msgs(
     exception_port: exception_port_t,
     run: Arc<AtomicBool>,
     tx: Arc<SyncSender<(Tracee, Event)>>,
-    rx: Receiver<()>,
 ) {
     while run.load(Ordering::Relaxed) {
         let mut msg: exception_message_t = unsafe { std::mem::zeroed() };
@@ -266,27 +268,21 @@ pub(crate) fn receive_mach_msgs(
         });
 
         // Send the event.
-        if let Some(event) = event {
+        if let Some(mut event) = event {
+            // Store the reply for when the thread gets resumed.
+            event.0.reply = Some(reply);
+
+            // Suspend the thread so we can resume the task.
+            unsafe {
+                thread_suspend(event.0.thread);
+            }
+
             tx.send(event).unwrap();
-            let _ = rx.recv().unwrap();
         }
 
-        // Resume the task after running our exception handler.
+        // Resume the task.
         unsafe {
-            task_resume(task)
-        };
-
-        // Send the reply.
-        unsafe {
-            mach_msg(
-                &mut reply.header,
-                MACH_SEND_MSG,
-                reply.header.msgh_size,
-                0,
-                MACH_PORT_NULL,
-                MACH_MSG_TIMEOUT_NONE,
-                MACH_PORT_NULL,
-            )
-        };
+            task_resume(task);
+        }
     }
 }
