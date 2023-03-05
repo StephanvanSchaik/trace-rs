@@ -1,4 +1,5 @@
 use crate::{Error, Event, Tracee};
+use crate::breakpoint::Breakpoint;
 use mach2::exception_types::*;
 use mach2::kern_return::KERN_SUCCESS;
 use mach2::mach_port::{mach_port_allocate, mach_port_deallocate, mach_port_insert_right};
@@ -129,6 +130,7 @@ pub struct Tracer {
     event_tx: Sender<Pid>,
     exception_port: mach_port_t,
     exception_thread: Option<JoinHandle<()>>,
+    pub(crate) breakpoints: HashMap<u32, HashMap<usize, Breakpoint>>,
 }
 
 impl Tracer {
@@ -185,6 +187,7 @@ impl Tracer {
             event_tx,
             exception_port,
             exception_thread: Some(exception_thread),
+            breakpoints: HashMap::new(),
         }
     }
 

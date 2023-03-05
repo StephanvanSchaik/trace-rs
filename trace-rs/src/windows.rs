@@ -1,4 +1,5 @@
 use crate::{Error, Event, Protection};
+use crate::breakpoint::Breakpoint;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::os::windows::process::CommandExt;
@@ -218,6 +219,7 @@ pub struct Tracer {
     children: HashMap<u32, Child>,
     processes: HashMap<u32, HANDLE>,
     threads: HashMap<u32, HANDLE>,
+    pub(crate) breakpoints: HashMap<u32, HashMap<usize, Breakpoint>>,
 }
 
 impl Tracer {
@@ -227,6 +229,7 @@ impl Tracer {
             children: HashMap::new(),
             processes: HashMap::new(),
             threads: HashMap::new(),
+            breakpoints: HashMap::new(),
         }
     }
 

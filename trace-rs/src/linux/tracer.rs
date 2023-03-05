@@ -1,4 +1,5 @@
 use crate::{Error, Event, Tracee};
+use crate::breakpoint::Breakpoint;
 use nix::{
     sys::{
         ptrace,
@@ -32,6 +33,7 @@ pub(crate) struct ChildInfo {
 pub struct Tracer {
     pub(crate) children: HashMap<Pid, ChildInfo>,
     pub(crate) files: HashMap<Pid, File>,
+    pub(crate) breakpoints: HashMap<u32, HashMap<usize, Breakpoint>>,
 }
 
 impl Tracer {
@@ -40,6 +42,7 @@ impl Tracer {
         Self {
             children: HashMap::new(),
             files: HashMap::new(),
+            breakpoints: HashMap::new(),
         }
     }
 

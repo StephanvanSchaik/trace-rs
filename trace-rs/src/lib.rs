@@ -1,4 +1,5 @@
 pub mod arch;
+pub mod breakpoint;
 pub mod error;
 pub mod event;
 
