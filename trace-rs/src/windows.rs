@@ -62,7 +62,7 @@ impl Tracee {
                 address as *mut _,
                 data.as_mut_ptr() as _,
                 data.len(),
-                &mut bytes_read,
+                Some(&mut bytes_read),
             )
         }.as_bool();
 
@@ -88,7 +88,7 @@ impl Tracee {
                 address as *mut _,
                 data.as_ptr() as _,
                 data.len(),
-                &mut bytes_written,
+                Some(&mut bytes_written),
             )
         }.as_bool();
 
@@ -368,7 +368,7 @@ impl Tracer {
     /// Resumes the execution of the traced process.
     pub fn resume(&self, tracee: Tracee) -> Result<(), Error> {
         unsafe {
-            ContinueDebugEvent(tracee.process_id, tracee.thread_id, DBG_CONTINUE.0 as u32);
+            ContinueDebugEvent(tracee.process_id, tracee.thread_id, DBG_CONTINUE);
         }
 
         Ok(())
@@ -426,7 +426,7 @@ impl Tracer {
         let result = unsafe {
             VirtualAllocEx(
                 tracee.process,
-                core::ptr::null_mut(),
+                None,
                 size,
                 MEM_COMMIT | MEM_RESERVE,
                 protect,
