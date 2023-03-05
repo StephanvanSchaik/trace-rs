@@ -339,7 +339,7 @@ impl Tracer {
                 let info = unsafe { event.u.Exception };
 
                 match info.ExceptionRecord.ExceptionCode {
-                    EXCEPTION_BREAKPOINT => Event::Breakpoint,
+                    EXCEPTION_BREAKPOINT => Event::Breakpoint(info.ExceptionRecord.ExceptionAddress as _),
                     EXCEPTION_SINGLE_STEP => Event::SingleStep,
                     code => Event::Exception(code.0 as u32),
                 }

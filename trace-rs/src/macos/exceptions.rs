@@ -143,7 +143,7 @@ extern "C" fn catch_mach_exception_raise(
                 set_single_step(thread_port, false);
                 Event::SingleStep
             } else {
-                Event::Breakpoint
+                Event::Breakpoint(codes[1] as _)
             };
 
             EVENT.with(|e| {

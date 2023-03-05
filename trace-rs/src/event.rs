@@ -30,7 +30,7 @@ pub enum Event {
     /// The process yielded debug output.
     Output(String),
     /// A breakpoint was triggered.
-    Breakpoint,
+    Breakpoint(usize),
     /// The traced process has performed a single step.
     SingleStep,
     /// The traced process is about to invoke a system call.

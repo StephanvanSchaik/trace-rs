@@ -128,7 +128,7 @@ impl Tracer {
                             Event::CreateProcess
                         },
                         ChildState::Step => Event::SingleStep,
-                        _ => Event::Breakpoint,
+                        _ => Event::Breakpoint(0),
                     }
                     None => {
                         self.children.insert(pid, ChildInfo {
