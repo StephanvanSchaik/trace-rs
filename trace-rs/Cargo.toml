@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
-mmap-rs = { git = "https://github.com/StephanvanSchaik/mmap-rs" }
+mmap-rs = "0.5"
 thiserror = "1"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
@@ -18,7 +18,7 @@ syscalls = "0.6"
 mach2 = { git = "https://github.com/JohnTitor/mach2" }
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.24"
+nix = "0.26"
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"
