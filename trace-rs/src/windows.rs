@@ -48,6 +48,11 @@ pub struct Tracee {
 }
 
 impl Tracee {
+    /// Returns the process ID.
+    pub fn process_id(&self) -> u32 {
+        self.process_id
+    }
+
     /// Reads the data at the virtual address from the traced process.
     pub fn read_memory(&self, address: usize, data: &mut [u8]) -> Result<usize, Error> {
         let handle = match self.process {
