@@ -53,19 +53,50 @@ impl TracerExt for Tracer {
         tracee.set_registers(&registers, &values)?;
 
         // Issue the system call.
-        for _ in 0..2 {
-            self.until_syscall(tracee)?;
-            tracee = self.wait()?.0;
-        }
+        self.until_syscall(tracee)?;
+        tracee = self.wait()?.0;
 
-        // Get the result.
-        let result = tracee.get_registers(&[Register::Rax])?[0];
+        let (tracee, result) = match tracee.state {
+            // If we get the syscall-exit-stop event after issuing the system call twice, it means
+            // we were already processing a syscall-enter-stop event. In this case, we capture the
+            // system call result, restore the original instruction and checkpoint state and issue
+            // the system call again to ensure we are back in the syscall-enter-stop event 
+            ChildState::AfterSystemCall => {
+                // Get the result.
+                let result = tracee.get_registers(&[Register::Rax])?[0];
 
-        // Restore the original instruction.
-        tracee.write_memory(rip as _, &bytes)?;
+                // Restore the original instruction.
+                tracee.write_memory(rip as _, &bytes)?;
 
-        // Restore the checkpoint.
-        ptrace::setregs(tracee.pid, regs)?;
+                // Restore the checkpoint.
+                ptrace::setregs(tracee.pid, regs)?;
+
+                // Issue the system call.
+                self.until_syscall(tracee)?;
+                tracee = self.wait()?.0;
+
+                (tracee, result)
+            }
+            // Otherwise, we should be in the syscall-enter-stop event for sure. In this case, we
+            // complete the system call to reach the syscall-exit-stop state, capture the system
+            // call result and restore the original instruction and checkpoint state.
+            _ => {
+                // Issue the system call.
+                self.until_syscall(tracee)?;
+                tracee = self.wait()?.0;
+
+                // Get the result.
+                let result = tracee.get_registers(&[Register::Rax])?[0];
+
+                // Restore the original instruction.
+                tracee.write_memory(rip as _, &bytes)?;
+
+                // Restore the checkpoint.
+                ptrace::setregs(tracee.pid, regs)?;
+
+                (tracee, result)
+            }
+        };
 
         Ok((tracee, result as usize))
     }
