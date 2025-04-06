@@ -2,7 +2,7 @@ use crate::{Error, Event, Tracee};
 use crate::breakpoint::Breakpoint;
 use nix::{
     sys::{
-        ptrace,
+        ptrace::{self, Event as PtraceEvent},
         signal::Signal,
         wait::{waitpid, WaitStatus},
     },
@@ -99,7 +99,11 @@ impl Tracer {
             WaitStatus::PtraceSyscall(pid) => {
                 (pid, None)
             }
-            _ => panic!("should not happen yet"),
+            #[cfg(target_os = "linux")]
+            WaitStatus::PtraceEvent(pid, signal, event) => {
+                (pid, None)
+            }
+            _ => panic!("should not happen yet {status:?}"),
         };
 
         let file = match self.files.remove(&pid) {
@@ -126,12 +130,17 @@ impl Tracer {
                     Some(child) => match child.state {
                         ChildState::Create => {
                             #[cfg(target_os = "linux")]
-                            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACESYSGOOD)?;
+                            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACESYSGOOD | ptrace::Options::PTRACE_O_TRACECLONE)?;
 
                             Event::CreateProcess
                         },
                         ChildState::Step => Event::SingleStep,
-                        _ => Event::Breakpoint(0),
+                        _ => if signal.is_none() {
+                            Event::Breakpoint(0)
+                        } else {
+                            // FIXME: sigstop?
+                            Event::CreateProcess
+                        },
                     }
                     None => {
                         self.children.insert(pid, ChildInfo {
@@ -140,7 +149,7 @@ impl Tracer {
                         });
 
                         #[cfg(target_os = "linux")]
-                        ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACESYSGOOD)?;
+                        ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACESYSGOOD | ptrace::Options::PTRACE_O_TRACECLONE)?;
 
                         Event::CreateProcess
                     }
@@ -176,6 +185,12 @@ impl Tracer {
                     }
                     _ => unreachable!(),
                 };
+
+                Ok((tracee, event))
+            }
+            #[cfg(target_os = "linux")]
+            WaitStatus::PtraceEvent(pid, signal, _) => {
+                let event = Event::CreateProcess;
 
                 Ok((tracee, event))
             }
@@ -220,5 +235,3 @@ impl Tracer {
         Ok(child)
     }
 }
-
-
