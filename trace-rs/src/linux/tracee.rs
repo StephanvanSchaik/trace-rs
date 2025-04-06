@@ -19,4 +19,8 @@ impl Tracee {
     pub fn process_id(&self) -> u32 {
         self.pid.as_raw() as _
     }
+
+    pub fn clear_signal(&mut self) {
+        self.signal = None;
+    }
 }
